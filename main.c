@@ -114,7 +114,7 @@ double calculateBearing(double lat1, double lon1, double lat2, double lon2);
 void drawText(SDL_Renderer* renderer, TTF_Font* font, const char* text, int x, int y, SDL_Color color, bool center);
 void drawDottedCircle(SDL_Renderer *renderer, int32_t centreX, int32_t centreY, int32_t radius);
 void SDL_RenderDrawCircle(SDL_Renderer * renderer, int32_t centreX, int32_t centreY, int32_t radius);
-void drawPlaneIcon(SDL_Renderer* renderer, int x, int y, double bearing);
+void drawPlaneIcon(SDL_Renderer* renderer, int x, int y, double bearing, Uint8 alpha);
 
 // --- Networking ---
 struct MemoryStruct { char *memory; size_t size; };
@@ -535,8 +535,11 @@ int main(int argc, char* argv[]) {
             float age = currentTime - activeBlips[i].spawnTime;
             float fade = 1.0f - (age / rotationPeriodMs);
             if (fade < 0.0f) fade = 0.0f;
-            SDL_SetRenderDrawColor(renderer, 0, 255, 0, (Uint8)(fade * 255));
-            drawPlaneIcon(renderer, activeBlips[i].x, activeBlips[i].y, activeBlips[i].bearing);
+            drawPlaneIcon(renderer,
+                          activeBlips[i].x,
+                          activeBlips[i].y,
+                          activeBlips[i].bearing,
+                          (Uint8)(fade * 255));
         }
         SDL_SetRenderDrawColor(renderer, 0, 255, 0, 255);
 
@@ -623,7 +626,7 @@ void drawText(SDL_Renderer* renderer, TTF_Font* font, const char* text, int x, i
     SDL_DestroyTexture(texture);
 }
 
-void drawPlaneIcon(SDL_Renderer* renderer, int x, int y, double bearing) {
+void drawPlaneIcon(SDL_Renderer* renderer, int x, int y, double bearing, Uint8 alpha) {
     static SDL_Texture* planeTexture = NULL;
 
     if (!planeTexture) {
@@ -645,6 +648,8 @@ void drawPlaneIcon(SDL_Renderer* renderer, int x, int y, double bearing) {
         if (!planeTexture) return;
         SDL_SetTextureBlendMode(planeTexture, SDL_BLENDMODE_BLEND);
     }
+
+    SDL_SetTextureAlphaMod(planeTexture, alpha);
 
     SDL_Rect dst = {
         x - PLANE_ICON_WIDTH / 2,
