@@ -67,6 +67,7 @@ typedef struct {
     int x;
     int y;
     Uint32 spawnTime;
+    double bearing;
 } RadarBlip;
 
 // --- Control State ---
@@ -111,6 +112,7 @@ double calculateBearing(double lat1, double lon1, double lat2, double lon2);
 void drawText(SDL_Renderer* renderer, TTF_Font* font, const char* text, int x, int y, SDL_Color color, bool center);
 void drawDottedCircle(SDL_Renderer *renderer, int32_t centreX, int32_t centreY, int32_t radius);
 void SDL_RenderDrawCircle(SDL_Renderer * renderer, int32_t centreX, int32_t centreY, int32_t radius);
+const char* directionSymbol(double bearing);
 
 // --- Networking ---
 struct MemoryStruct { char *memory; size_t size; };
@@ -416,6 +418,7 @@ int main(int argc, char* argv[]) {
                         activeBlips[activeBlipsCount].x = RADAR_CENTER_X + screenRadius * sin(angleRad);
                         activeBlips[activeBlipsCount].y = RADAR_CENTER_Y - screenRadius * cos(angleRad);
                         activeBlips[activeBlipsCount].spawnTime = currentTime;
+                        activeBlips[activeBlipsCount].bearing = targetBearing;
                         activeBlipsCount++;
 
                         lastPingedAircraft = trackedAircraft[i];
@@ -490,12 +493,8 @@ int main(int argc, char* argv[]) {
 
         // Blips
         for (int i = 0; i < activeBlipsCount; i++) {
-            Uint32 age = currentTime - activeBlips[i].spawnTime;
-            float life_ratio = (float)age / BLIP_LIFESPAN_MS;
-            int size = 3 * (1.0f - life_ratio);
-            if (size < 1) size = 1;
-            SDL_Rect blipRect = { activeBlips[i].x - size, activeBlips[i].y - size, size*2, size*2 };
-            SDL_RenderFillRect(renderer, &blipRect);
+            const char* symbol = directionSymbol(activeBlips[i].bearing);
+            drawText(renderer, small_font, symbol, activeBlips[i].x, activeBlips[i].y, green, true);
         }
 
         // Display Overlay
@@ -579,6 +578,16 @@ void drawText(SDL_Renderer* renderer, TTF_Font* font, const char* text, int x, i
     SDL_RenderCopy(renderer, texture, NULL, &destRect);
     SDL_FreeSurface(surface);
     SDL_DestroyTexture(texture);
+}
+
+const char* directionSymbol(double bearing) {
+    int dir = ((int)((bearing + 45.0) / 90.0)) % 4;
+    switch (dir) {
+        case 0: return "^";
+        case 1: return ">";
+        case 2: return "v";
+        default: return "<";
+    }
 }
 
 double deg2rad(double deg) { return deg * M_PI / 180.0; }
