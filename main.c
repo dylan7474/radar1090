@@ -39,7 +39,6 @@
 
 // --- Radar Constants ---
 #define EARTH_RADIUS_KM 6371.0
-#define BLIP_LIFESPAN_MS 10000 // Blips last for 10 seconds
 #define RADAR_CENTER_X (SCREEN_WIDTH * 0.7)
 #define RADAR_CENTER_Y (SCREEN_HEIGHT / 2)
 #define RADAR_RADIUS (SCREEN_HEIGHT * 0.4)
@@ -83,6 +82,8 @@ int trackedAircraftCount = 0;
 RadarBlip* activeBlips = NULL;
 int activeBlipsCount = 0;
 pthread_mutex_t dataMutex;
+double receiverLat = USER_LAT;
+double receiverLon = USER_LON;
 
 // --- Control & Display Variables ---
 int beepVolume = 10; // 0-20
@@ -148,6 +149,31 @@ void* fetchDataTask(void *arg) {
     curl_easy_setopt(curl_handle, CURLOPT_USERAGENT, "libcurl-agent/1.0");
     curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT_MS, 4000L);
 
+    // Attempt to fetch receiver location once so blip positions match server map
+    chunk.memory = malloc(1);
+    if (chunk.memory) {
+        chunk.size = 0;
+        char rxUrl[200];
+        snprintf(rxUrl, sizeof(rxUrl), "http://%s:%d/dump1090-fa/data/receiver.json", DUMP1090_SERVER, DUMP1090_PORT);
+        curl_easy_setopt(curl_handle, CURLOPT_URL, rxUrl);
+        curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
+        if (curl_easy_perform(curl_handle) == CURLE_OK) {
+            json_error_t rerror;
+            json_t *rroot = json_loads(chunk.memory, 0, &rerror);
+            if (rroot) {
+                json_t *lat_j = json_object_get(rroot, "lat");
+                json_t *lon_j = json_object_get(rroot, "lon");
+                if (json_is_real(lat_j) && json_is_real(lon_j)) {
+                    receiverLat = json_real_value(lat_j);
+                    receiverLon = json_real_value(lon_j);
+                }
+                json_decref(rroot);
+            }
+        }
+        free(chunk.memory);
+        curl_easy_setopt(curl_handle, CURLOPT_URL, url);
+    }
+
     while(app_is_running) {
         chunk.memory = malloc(1);
         if (!chunk.memory) {
@@ -177,14 +203,14 @@ void* fetchDataTask(void *arg) {
                         json_t *lon_json = json_object_get(plane, "lon");
 
                         if (json_is_real(lat_json) && json_is_real(lon_json)) {
-                            double dist = haversine(USER_LAT, USER_LON, json_real_value(lat_json), json_real_value(lon_json));
+                            double dist = haversine(receiverLat, receiverLon, json_real_value(lat_json), json_real_value(lon_json));
                             if (dist < radarRangeKm) {
                                 Aircraft ac = {.isValid = true};
                                 const char* flightStr = json_string_value(json_object_get(plane, "flight"));
                                 if(flightStr) { strncpy(ac.flight, flightStr, sizeof(ac.flight) - 1); ac.flight[sizeof(ac.flight) - 1] = '\0'; } else { ac.flight[0] = '\0'; }
 
                                 ac.distanceKm = dist;
-                                ac.bearing = calculateBearing(USER_LAT, USER_LON, json_real_value(lat_json), json_real_value(lon_json));
+                                ac.bearing = calculateBearing(receiverLat, receiverLon, json_real_value(lat_json), json_real_value(lon_json));
 
                                 json_t *alt_json = json_object_get(plane, "alt_baro");
                                 if (json_is_integer(alt_json)) ac.altitude = json_integer_value(alt_json); else ac.altitude = -1;
@@ -376,12 +402,22 @@ int main(int argc, char* argv[]) {
                         if(rangeStepIndex < rangeStepsCount - 1) rangeStepIndex++;
                         radarRangeKm = rangeSteps[rangeStepIndex];
                         snprintf(displayMessage, sizeof(displayMessage), "Range: %.0f km", radarRangeKm);
+                        free(activeBlips);
+                        activeBlips = NULL;
+                        activeBlipsCount = 0;
+                        lastPingedAircraft.isValid = false;
+                        if (paintedThisTurn) memset(paintedThisTurn, 0, trackedAircraftCount * sizeof(bool));
                         displayTimeout = currentTime + DISPLAY_TIMEOUT_MS;
                         break;
                     case SDLK_DOWN:
                         if(rangeStepIndex > 0) rangeStepIndex--;
                         radarRangeKm = rangeSteps[rangeStepIndex];
                         snprintf(displayMessage, sizeof(displayMessage), "Range: %.0f km", radarRangeKm);
+                        free(activeBlips);
+                        activeBlips = NULL;
+                        activeBlipsCount = 0;
+                        lastPingedAircraft.isValid = false;
+                        if (paintedThisTurn) memset(paintedThisTurn, 0, trackedAircraftCount * sizeof(bool));
                         displayTimeout = currentTime + DISPLAY_TIMEOUT_MS;
                         break;
                 }
@@ -396,6 +432,7 @@ int main(int argc, char* argv[]) {
             sweepAngle = fmod(sweepAngle, 360.0f);
             sweepWrapped = true;
         }
+        float rotationPeriodMs = (360.0f / sweepSpeed) * 1000.0f;
 
         pthread_mutex_lock(&dataMutex);
         if (sweepWrapped && paintedThisTurn) {
@@ -433,7 +470,7 @@ int main(int argc, char* argv[]) {
         // Update blips (in-place filtering)
         int aliveBlips = 0;
         for (int i = 0; i < activeBlipsCount; i++) {
-            if (currentTime - activeBlips[i].spawnTime < BLIP_LIFESPAN_MS) {
+            if (currentTime - activeBlips[i].spawnTime < rotationPeriodMs) {
                 if (i != aliveBlips) {
                     activeBlips[aliveBlips] = activeBlips[i];
                 }
@@ -446,6 +483,7 @@ int main(int argc, char* argv[]) {
         // Render
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
         SDL_RenderClear(renderer);
+        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 
         // UI Text
         char buffer[100];
@@ -493,8 +531,13 @@ int main(int argc, char* argv[]) {
 
         // Blips
         for (int i = 0; i < activeBlipsCount; i++) {
+            float age = currentTime - activeBlips[i].spawnTime;
+            float fade = 1.0f - (age / rotationPeriodMs);
+            if (fade < 0.0f) fade = 0.0f;
+            SDL_SetRenderDrawColor(renderer, 0, 255, 0, (Uint8)(fade * 255));
             drawPlaneIcon(renderer, activeBlips[i].x, activeBlips[i].y, activeBlips[i].bearing);
         }
+        SDL_SetRenderDrawColor(renderer, 0, 255, 0, 255);
 
         // Display Overlay
         if (currentTime < displayTimeout) {
@@ -586,8 +629,8 @@ void drawPlaneIcon(SDL_Renderer* renderer, int x, int y, double bearing) {
     double px = -dy;
     double py = dx;
 
-    const double bodyLen = 10.0;
-    const double wingSpan = 6.0;
+    const double bodyLen = 30.0;
+    const double wingSpan = 18.0;
 
     SDL_Point nose = {
         x + (int)(dx * bodyLen / 2.0),
