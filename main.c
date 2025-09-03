@@ -128,89 +128,104 @@ static size_t WriteMemoryCallback(void *contents, size_t size, size_t nmemb, voi
 }
 
 void* fetchDataTask(void *arg) {
-    CURL *curl_handle;
     CURLcode res;
     struct MemoryStruct chunk;
     char url[200];
     snprintf(url, sizeof(url), "http://%s:%d/dump1090-fa/data/aircraft.json", DUMP1090_SERVER, DUMP1090_PORT);
 
     curl_global_init(CURL_GLOBAL_ALL);
+    CURL *curl_handle = curl_easy_init();
+    if (!curl_handle) {
+        fprintf(stderr, "curl_easy_init() failed\n");
+        curl_global_cleanup();
+        return NULL;
+    }
+
+    curl_easy_setopt(curl_handle, CURLOPT_URL, url);
+    curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
+    curl_easy_setopt(curl_handle, CURLOPT_USERAGENT, "libcurl-agent/1.0");
+    curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT_MS, 4000L);
 
     while(app_is_running) {
         chunk.memory = malloc(1);
+        if (!chunk.memory) {
+            fprintf(stderr, "Failed to allocate memory for CURL buffer\n");
+            SDL_Delay(REFRESH_INTERVAL_MS);
+            continue;
+        }
         chunk.size = 0;
-        curl_handle = curl_easy_init();
-        if(curl_handle) {
-            curl_easy_setopt(curl_handle, CURLOPT_URL, url);
-            curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
-            curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
-            curl_easy_setopt(curl_handle, CURLOPT_USERAGENT, "libcurl-agent/1.0");
-            curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT_MS, 4000L);
-            res = curl_easy_perform(curl_handle);
+        curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
+        res = curl_easy_perform(curl_handle);
 
-            if(res == CURLE_OK) {
-                json_error_t error;
-                json_t *root = json_loads(chunk.memory, 0, &error);
-                if (root) {
-                    dataConnectionOk = true;
-                    json_t *aircraft_array = json_object_get(root, "aircraft");
-                    if (json_is_array(aircraft_array)) {
-                        size_t count = json_array_size(aircraft_array);
-                        Aircraft* planesInRange = malloc(sizeof(Aircraft) * (count > 0 ? count : 1));
+        if(res == CURLE_OK) {
+            json_error_t error;
+            json_t *root = json_loads(chunk.memory, 0, &error);
+            if (root) {
+                dataConnectionOk = true;
+                json_t *aircraft_array = json_object_get(root, "aircraft");
+                if (json_is_array(aircraft_array)) {
+                    size_t count = json_array_size(aircraft_array);
+                    Aircraft* planesInRange = malloc(sizeof(Aircraft) * (count > 0 ? count : 1));
+                    if (planesInRange) {
                         int planesInRangeCount = 0;
-                        
+
                         for (size_t i = 0; i < count; i++) {
-                            json_t *plane = json_array_get(aircraft_array, i);
-                            json_t *lat_json = json_object_get(plane, "lat");
-                            json_t *lon_json = json_object_get(plane, "lon");
+                        json_t *plane = json_array_get(aircraft_array, i);
+                        json_t *lat_json = json_object_get(plane, "lat");
+                        json_t *lon_json = json_object_get(plane, "lon");
 
-                            if (json_is_real(lat_json) && json_is_real(lon_json)) {
-                                double dist = haversine(USER_LAT, USER_LON, json_real_value(lat_json), json_real_value(lon_json));
-                                if (dist < radarRangeKm) {
-                                    Aircraft ac = {.isValid = true};
-                                    const char* flightStr = json_string_value(json_object_get(plane, "flight"));
-                                    if(flightStr) { strncpy(ac.flight, flightStr, sizeof(ac.flight) - 1); ac.flight[sizeof(ac.flight) - 1] = '\0'; } else { ac.flight[0] = '\0'; }
-                                    
-                                    ac.distanceKm = dist;
-                                    ac.bearing = calculateBearing(USER_LAT, USER_LON, json_real_value(lat_json), json_real_value(lon_json));
-                                    
-                                    json_t *alt_json = json_object_get(plane, "alt_baro");
-                                    if (json_is_integer(alt_json)) ac.altitude = json_integer_value(alt_json); else ac.altitude = -1;
+                        if (json_is_real(lat_json) && json_is_real(lon_json)) {
+                            double dist = haversine(USER_LAT, USER_LON, json_real_value(lat_json), json_real_value(lon_json));
+                            if (dist < radarRangeKm) {
+                                Aircraft ac = {.isValid = true};
+                                const char* flightStr = json_string_value(json_object_get(plane, "flight"));
+                                if(flightStr) { strncpy(ac.flight, flightStr, sizeof(ac.flight) - 1); ac.flight[sizeof(ac.flight) - 1] = '\0'; } else { ac.flight[0] = '\0'; }
 
-                                    json_t *gs_json = json_object_get(plane, "gs");
-                                    if(json_is_real(gs_json)) ac.groundSpeed = json_real_value(gs_json); else ac.groundSpeed = -1.0f;
-                                    
-                                    planesInRange[planesInRangeCount++] = ac;
-                                }
+                                ac.distanceKm = dist;
+                                ac.bearing = calculateBearing(USER_LAT, USER_LON, json_real_value(lat_json), json_real_value(lon_json));
+
+                                json_t *alt_json = json_object_get(plane, "alt_baro");
+                                if (json_is_integer(alt_json)) ac.altitude = json_integer_value(alt_json); else ac.altitude = -1;
+
+                                json_t *gs_json = json_object_get(plane, "gs");
+                                if(json_is_real(gs_json)) ac.groundSpeed = json_real_value(gs_json); else ac.groundSpeed = -1.0f;
+
+                                planesInRange[planesInRangeCount++] = ac;
                             }
                         }
-                        pthread_mutex_lock(&dataMutex);
-                        free(trackedAircraft);
-                        trackedAircraft = planesInRange;
-                        trackedAircraftCount = planesInRangeCount;
-                        // New data arrived, so we need a new paint buffer
+                    }
+                    pthread_mutex_lock(&dataMutex);
+                    free(trackedAircraft);
+                    trackedAircraft = planesInRange;
+                    trackedAircraftCount = planesInRangeCount;
+                    // New data arrived, so we need a new paint buffer
                         free(paintedThisTurn);
                         paintedThisTurn = calloc(trackedAircraftCount > 0 ? trackedAircraftCount : 1, sizeof(bool));
+                        if (!paintedThisTurn) {
+                            dataConnectionOk = false;
+                        }
                         pthread_mutex_unlock(&dataMutex);
+                    } else {
+                        dataConnectionOk = false;
                     }
-                    json_decref(root);
-                } else {
-                    dataConnectionOk = false;
                 }
+                json_decref(root);
             } else {
-                fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
                 dataConnectionOk = false;
-                pthread_mutex_lock(&dataMutex);
-                trackedAircraftCount = 0;
-                lastPingedAircraft.isValid = false;
-                pthread_mutex_unlock(&dataMutex);
             }
-
-            curl_easy_cleanup(curl_handle);
+        } else {
+            fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+            dataConnectionOk = false;
+            pthread_mutex_lock(&dataMutex);
+            trackedAircraftCount = 0;
+            lastPingedAircraft.isValid = false;
+            pthread_mutex_unlock(&dataMutex);
         }
+
         free(chunk.memory);
         SDL_Delay(REFRESH_INTERVAL_MS);
     }
+    curl_easy_cleanup(curl_handle);
     curl_global_cleanup();
     return NULL;
 }
@@ -395,15 +410,18 @@ int main(int argc, char* argv[]) {
                     double angleRad = deg2rad(targetBearing);
                     float screenRadius = (trackedAircraft[i].distanceKm / radarRangeKm) * RADAR_RADIUS;
                     
-                    activeBlips = realloc(activeBlips, (activeBlipsCount + 1) * sizeof(RadarBlip));
-                    activeBlips[activeBlipsCount].x = RADAR_CENTER_X + screenRadius * sin(angleRad);
-                    activeBlips[activeBlipsCount].y = RADAR_CENTER_Y - screenRadius * cos(angleRad);
-                    activeBlips[activeBlipsCount].spawnTime = currentTime;
-                    activeBlipsCount++;
+                    RadarBlip* newBlips = realloc(activeBlips, (activeBlipsCount + 1) * sizeof(RadarBlip));
+                    if (newBlips) {
+                        activeBlips = newBlips;
+                        activeBlips[activeBlipsCount].x = RADAR_CENTER_X + screenRadius * sin(angleRad);
+                        activeBlips[activeBlipsCount].y = RADAR_CENTER_Y - screenRadius * cos(angleRad);
+                        activeBlips[activeBlipsCount].spawnTime = currentTime;
+                        activeBlipsCount++;
 
-                    lastPingedAircraft = trackedAircraft[i];
-                    paintedThisTurn[i] = true;
-                    playBeep(getBeepFrequencyForAltitude(trackedAircraft[i].altitude), 50);
+                        lastPingedAircraft = trackedAircraft[i];
+                        paintedThisTurn[i] = true;
+                        playBeep(getBeepFrequencyForAltitude(trackedAircraft[i].altitude), 50);
+                    }
                 }
             }
         }
