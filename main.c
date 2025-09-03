@@ -54,6 +54,13 @@
 #define FREQ_MID 1200
 #define FREQ_HIGH 1800
 
+// --- Color Scheme ---
+const SDL_Color COLOR_BG        = {16, 16, 20, 255};
+const SDL_Color COLOR_RADAR     = {0, 200, 100, 255};
+const SDL_Color COLOR_TEXT      = {240, 240, 240, 255};
+const SDL_Color COLOR_ALERT     = {255, 80, 80, 255};
+const SDL_Color COLOR_OVERLAY_BG = {0, 0, 40, 200};
+
 // --- Data Structs ---
 typedef struct {
     char flight[10];
@@ -357,15 +364,19 @@ int main(int argc, char* argv[]) {
         SDL_DestroyWindow(window); TTF_Quit(); SDL_Quit(); return 1;
     }
 
-    // Use the macros defined at the top of the file to load the font from memory.
-    // This makes it easy to change the font file without editing code logic.
-    SDL_RWops* font_mem = SDL_RWFromConstMem(EMBEDDED_FONT_ARRAY, EMBEDDED_FONT_LEN);
-    TTF_Font* font = TTF_OpenFontRW(font_mem, 1, 24);
+    // Try to load a modern system font, fall back to the embedded one if unavailable
+    TTF_Font* font = TTF_OpenFont("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 24);
+    if (!font) {
+        SDL_RWops* font_mem = SDL_RWFromConstMem(EMBEDDED_FONT_ARRAY, EMBEDDED_FONT_LEN);
+        font = TTF_OpenFontRW(font_mem, 1, 24);
+    }
     if (!font) { fprintf(stderr, "Failed to load main font: %s\n", TTF_GetError()); /* continue anyway */ }
-    
-    // The RWops needs to be created again for the second font load.
-    SDL_RWops* small_font_mem = SDL_RWFromConstMem(EMBEDDED_FONT_ARRAY, EMBEDDED_FONT_LEN);
-    TTF_Font* small_font = TTF_OpenFontRW(small_font_mem, 1, 18);
+
+    TTF_Font* small_font = TTF_OpenFont("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 18);
+    if (!small_font) {
+        SDL_RWops* small_font_mem = SDL_RWFromConstMem(EMBEDDED_FONT_ARRAY, EMBEDDED_FONT_LEN);
+        small_font = TTF_OpenFontRW(small_font_mem, 1, 18);
+    }
     if (!small_font) { fprintf(stderr, "Failed to load small font: %s\n", TTF_GetError()); /* continue anyway */ }
 
 
@@ -517,47 +528,52 @@ int main(int argc, char* argv[]) {
 
 
         // Render
-        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_SetRenderDrawColor(renderer, COLOR_BG.r, COLOR_BG.g, COLOR_BG.b, COLOR_BG.a);
         SDL_RenderClear(renderer);
         SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 
         // UI Text
         char buffer[100];
         int text_y = 20;
-        SDL_Color white = {255, 255, 255, 255};
-        SDL_Color green = {0, 255, 0, 255};
-        SDL_Color red = {255, 0, 0, 255};
+        SDL_Color textColor = COLOR_TEXT;
+        SDL_Color accent = COLOR_RADAR;
+        SDL_Color alert = COLOR_ALERT;
 
         if (lastPingedAircraft.isValid) {
             snprintf(buffer, sizeof(buffer), "Flt: %s", strlen(lastPingedAircraft.flight) > 0 ? lastPingedAircraft.flight : "------");
-            drawText(renderer, font, buffer, 20, text_y, white, false); text_y += 35;
+            drawText(renderer, font, buffer, 20, text_y, textColor, false); text_y += 35;
             snprintf(buffer, sizeof(buffer), "Dst: %.1f km", lastPingedAircraft.distanceKm);
-            drawText(renderer, font, buffer, 20, text_y, white, false); text_y += 35;
+            drawText(renderer, font, buffer, 20, text_y, textColor, false); text_y += 35;
             if (lastPingedAircraft.altitude > 0) snprintf(buffer, sizeof(buffer), "Alt: %d ft", lastPingedAircraft.altitude);
             else snprintf(buffer, sizeof(buffer), "Alt: -----");
-            drawText(renderer, font, buffer, 20, text_y, white, false); text_y += 35;
+            drawText(renderer, font, buffer, 20, text_y, textColor, false); text_y += 35;
             if (lastPingedAircraft.groundSpeed > 0) snprintf(buffer, sizeof(buffer), "Spd: %.0f kt", lastPingedAircraft.groundSpeed);
             else snprintf(buffer, sizeof(buffer), "Spd: ---");
-            drawText(renderer, font, buffer, 20, text_y, white, false); text_y += 35;
+            drawText(renderer, font, buffer, 20, text_y, textColor, false); text_y += 35;
         } else {
-             drawText(renderer, font, "Scanning...", 20, text_y, white, false); text_y += 35;
+             drawText(renderer, font, "Scanning...", 20, text_y, textColor, false); text_y += 35;
         }
         
         text_y = SCREEN_HEIGHT - 120;
         snprintf(buffer, sizeof(buffer), "Range: %.0f km", radarRangeKm);
-        drawText(renderer, font, buffer, 20, text_y, green, false); text_y += 35;
+        drawText(renderer, font, buffer, 20, text_y, accent, false); text_y += 35;
         snprintf(buffer, sizeof(buffer), "Tracked: %d", trackedAircraftCount);
-        drawText(renderer, font, buffer, 20, text_y, green, false); text_y += 35;
-        drawText(renderer, font, dataConnectionOk ? "Link: OK" : "Link: DOWN", 20, text_y, dataConnectionOk ? green : red, false);
+        drawText(renderer, font, buffer, 20, text_y, accent, false); text_y += 35;
+        drawText(renderer, font, dataConnectionOk ? "Link: OK" : "Link: DOWN", 20, text_y, dataConnectionOk ? accent : alert, false);
 
         // Radar Display
-        SDL_SetRenderDrawColor(renderer, 0, 255, 0, 255);
+        SDL_SetRenderDrawColor(renderer, accent.r, accent.g, accent.b, accent.a);
         for(int w = 0; w < 3; w++) {
             SDL_RenderDrawCircle(renderer, RADAR_CENTER_X, RADAR_CENTER_Y, RADAR_RADIUS - w);
         }
         drawDottedCircle(renderer, RADAR_CENTER_X, RADAR_CENTER_Y, RADAR_RADIUS * 2 / 3);
         drawDottedCircle(renderer, RADAR_CENTER_X, RADAR_CENTER_Y, RADAR_RADIUS * 1 / 3);
-        drawText(renderer, small_font, "N", RADAR_CENTER_X, RADAR_CENTER_Y - RADAR_RADIUS - 10, green, true);
+        // Cardinal crosshair lines
+        SDL_RenderDrawLine(renderer, RADAR_CENTER_X - RADAR_RADIUS, RADAR_CENTER_Y,
+                           RADAR_CENTER_X + RADAR_RADIUS, RADAR_CENTER_Y);
+        SDL_RenderDrawLine(renderer, RADAR_CENTER_X, RADAR_CENTER_Y - RADAR_RADIUS,
+                           RADAR_CENTER_X, RADAR_CENTER_Y + RADAR_RADIUS);
+        drawText(renderer, small_font, "N", RADAR_CENTER_X, RADAR_CENTER_Y - RADAR_RADIUS - 10, accent, true);
 
         // Radar Sweep
         double sweepRad = deg2rad(sweepAngle);
@@ -576,17 +592,17 @@ int main(int argc, char* argv[]) {
                           activeBlips[i].bearing,
                           (Uint8)(fade * 255));
         }
-        SDL_SetRenderDrawColor(renderer, 0, 255, 0, 255);
+        SDL_SetRenderDrawColor(renderer, accent.r, accent.g, accent.b, accent.a);
 
         // Display Overlay
         if (currentTime < displayTimeout) {
             SDL_Rect bg = {SCREEN_WIDTH/2 - 175, SCREEN_HEIGHT/2 - 40, 350, 80};
             SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-            SDL_SetRenderDrawColor(renderer, 0, 0, 50, 200);
+            SDL_SetRenderDrawColor(renderer, COLOR_OVERLAY_BG.r, COLOR_OVERLAY_BG.g, COLOR_OVERLAY_BG.b, COLOR_OVERLAY_BG.a);
             SDL_RenderFillRect(renderer, &bg);
-            SDL_SetRenderDrawColor(renderer, 0, 255, 0, 255);
+            SDL_SetRenderDrawColor(renderer, accent.r, accent.g, accent.b, accent.a);
             SDL_RenderDrawRect(renderer, &bg);
-            drawText(renderer, font, displayMessage, SCREEN_WIDTH/2, bg.y + 25, white, true);
+            drawText(renderer, font, displayMessage, SCREEN_WIDTH/2, bg.y + 25, textColor, true);
         }
 
         SDL_RenderPresent(renderer);
