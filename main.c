@@ -39,7 +39,6 @@
 
 // --- Radar Constants ---
 #define EARTH_RADIUS_KM 6371.0
-#define BLIP_LIFESPAN_MS 10000 // Blips last for 10 seconds
 #define RADAR_CENTER_X (SCREEN_WIDTH * 0.7)
 #define RADAR_CENTER_Y (SCREEN_HEIGHT / 2)
 #define RADAR_RADIUS (SCREEN_HEIGHT * 0.4)
@@ -376,12 +375,22 @@ int main(int argc, char* argv[]) {
                         if(rangeStepIndex < rangeStepsCount - 1) rangeStepIndex++;
                         radarRangeKm = rangeSteps[rangeStepIndex];
                         snprintf(displayMessage, sizeof(displayMessage), "Range: %.0f km", radarRangeKm);
+                        free(activeBlips);
+                        activeBlips = NULL;
+                        activeBlipsCount = 0;
+                        lastPingedAircraft.isValid = false;
+                        if (paintedThisTurn) memset(paintedThisTurn, 0, trackedAircraftCount * sizeof(bool));
                         displayTimeout = currentTime + DISPLAY_TIMEOUT_MS;
                         break;
                     case SDLK_DOWN:
                         if(rangeStepIndex > 0) rangeStepIndex--;
                         radarRangeKm = rangeSteps[rangeStepIndex];
                         snprintf(displayMessage, sizeof(displayMessage), "Range: %.0f km", radarRangeKm);
+                        free(activeBlips);
+                        activeBlips = NULL;
+                        activeBlipsCount = 0;
+                        lastPingedAircraft.isValid = false;
+                        if (paintedThisTurn) memset(paintedThisTurn, 0, trackedAircraftCount * sizeof(bool));
                         displayTimeout = currentTime + DISPLAY_TIMEOUT_MS;
                         break;
                 }
@@ -396,6 +405,7 @@ int main(int argc, char* argv[]) {
             sweepAngle = fmod(sweepAngle, 360.0f);
             sweepWrapped = true;
         }
+        float rotationPeriodMs = (360.0f / sweepSpeed) * 1000.0f;
 
         pthread_mutex_lock(&dataMutex);
         if (sweepWrapped && paintedThisTurn) {
@@ -433,7 +443,7 @@ int main(int argc, char* argv[]) {
         // Update blips (in-place filtering)
         int aliveBlips = 0;
         for (int i = 0; i < activeBlipsCount; i++) {
-            if (currentTime - activeBlips[i].spawnTime < BLIP_LIFESPAN_MS) {
+            if (currentTime - activeBlips[i].spawnTime < rotationPeriodMs) {
                 if (i != aliveBlips) {
                     activeBlips[aliveBlips] = activeBlips[i];
                 }
@@ -446,6 +456,7 @@ int main(int argc, char* argv[]) {
         // Render
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
         SDL_RenderClear(renderer);
+        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 
         // UI Text
         char buffer[100];
@@ -493,8 +504,13 @@ int main(int argc, char* argv[]) {
 
         // Blips
         for (int i = 0; i < activeBlipsCount; i++) {
+            float age = currentTime - activeBlips[i].spawnTime;
+            float fade = 1.0f - (age / rotationPeriodMs);
+            if (fade < 0.0f) fade = 0.0f;
+            SDL_SetRenderDrawColor(renderer, 0, 255, 0, (Uint8)(fade * 255));
             drawPlaneIcon(renderer, activeBlips[i].x, activeBlips[i].y, activeBlips[i].bearing);
         }
+        SDL_SetRenderDrawColor(renderer, 0, 255, 0, 255);
 
         // Display Overlay
         if (currentTime < displayTimeout) {
@@ -586,8 +602,8 @@ void drawPlaneIcon(SDL_Renderer* renderer, int x, int y, double bearing) {
     double px = -dy;
     double py = dx;
 
-    const double bodyLen = 10.0;
-    const double wingSpan = 6.0;
+    const double bodyLen = 30.0;
+    const double wingSpan = 18.0;
 
     SDL_Point nose = {
         x + (int)(dx * bodyLen / 2.0),
