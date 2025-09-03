@@ -12,7 +12,7 @@ CFLAGS = -I$(MINGW_PREFIX)/include/SDL2 \
 
 # Link against all necessary static libraries for a self-contained .exe
 LDFLAGS = -L$(MINGW_PREFIX)/lib \
-          -lmingw32 -lSDL2main -lSDL2 -lSDL2_ttf -lSDL2_mixer \
+         -lmingw32 -lSDL2main -lSDL2 -lSDL2_ttf -lSDL2_mixer -lSDL2_image \
           -ljansson -lcurl -lbcrypt -lpthread -lws2_32 -lcrypt32 \
           -lwldap32 -lgdi32 -lwinmm -limm32 -lole32 \
           -loleaut32 -lversion -lsetupapi -lrpcrt4 -lm -mwindows -static
