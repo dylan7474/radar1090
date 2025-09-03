@@ -82,6 +82,8 @@ int trackedAircraftCount = 0;
 RadarBlip* activeBlips = NULL;
 int activeBlipsCount = 0;
 pthread_mutex_t dataMutex;
+double receiverLat = USER_LAT;
+double receiverLon = USER_LON;
 
 // --- Control & Display Variables ---
 int beepVolume = 10; // 0-20
@@ -147,6 +149,31 @@ void* fetchDataTask(void *arg) {
     curl_easy_setopt(curl_handle, CURLOPT_USERAGENT, "libcurl-agent/1.0");
     curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT_MS, 4000L);
 
+    // Attempt to fetch receiver location once so blip positions match server map
+    chunk.memory = malloc(1);
+    if (chunk.memory) {
+        chunk.size = 0;
+        char rxUrl[200];
+        snprintf(rxUrl, sizeof(rxUrl), "http://%s:%d/dump1090-fa/data/receiver.json", DUMP1090_SERVER, DUMP1090_PORT);
+        curl_easy_setopt(curl_handle, CURLOPT_URL, rxUrl);
+        curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
+        if (curl_easy_perform(curl_handle) == CURLE_OK) {
+            json_error_t rerror;
+            json_t *rroot = json_loads(chunk.memory, 0, &rerror);
+            if (rroot) {
+                json_t *lat_j = json_object_get(rroot, "lat");
+                json_t *lon_j = json_object_get(rroot, "lon");
+                if (json_is_real(lat_j) && json_is_real(lon_j)) {
+                    receiverLat = json_real_value(lat_j);
+                    receiverLon = json_real_value(lon_j);
+                }
+                json_decref(rroot);
+            }
+        }
+        free(chunk.memory);
+        curl_easy_setopt(curl_handle, CURLOPT_URL, url);
+    }
+
     while(app_is_running) {
         chunk.memory = malloc(1);
         if (!chunk.memory) {
@@ -176,14 +203,14 @@ void* fetchDataTask(void *arg) {
                         json_t *lon_json = json_object_get(plane, "lon");
 
                         if (json_is_real(lat_json) && json_is_real(lon_json)) {
-                            double dist = haversine(USER_LAT, USER_LON, json_real_value(lat_json), json_real_value(lon_json));
+                            double dist = haversine(receiverLat, receiverLon, json_real_value(lat_json), json_real_value(lon_json));
                             if (dist < radarRangeKm) {
                                 Aircraft ac = {.isValid = true};
                                 const char* flightStr = json_string_value(json_object_get(plane, "flight"));
                                 if(flightStr) { strncpy(ac.flight, flightStr, sizeof(ac.flight) - 1); ac.flight[sizeof(ac.flight) - 1] = '\0'; } else { ac.flight[0] = '\0'; }
 
                                 ac.distanceKm = dist;
-                                ac.bearing = calculateBearing(USER_LAT, USER_LON, json_real_value(lat_json), json_real_value(lon_json));
+                                ac.bearing = calculateBearing(receiverLat, receiverLon, json_real_value(lat_json), json_real_value(lon_json));
 
                                 json_t *alt_json = json_object_get(plane, "alt_baro");
                                 if (json_is_integer(alt_json)) ac.altitude = json_integer_value(alt_json); else ac.altitude = -1;
