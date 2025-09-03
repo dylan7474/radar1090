@@ -37,6 +37,7 @@
 #define SCREEN_HEIGHT 600
 #define REFRESH_INTERVAL_MS 5000
 #define DISPLAY_TIMEOUT_MS 1500
+#define PLANE_ICON_SCALE 0.1f
 
 // --- Radar Constants ---
 #define EARTH_RADIUS_KM 6371.0
@@ -644,8 +645,8 @@ void drawPlaneIcon(SDL_Renderer* renderer, int x, int y, double bearing, Uint8 a
             return;
         }
 
-        planeWidth = surface->w;
-        planeHeight = surface->h;
+        planeWidth = (int)(surface->w * PLANE_ICON_SCALE);
+        planeHeight = (int)(surface->h * PLANE_ICON_SCALE);
 
         planeTexture = SDL_CreateTextureFromSurface(renderer, surface);
         SDL_FreeSurface(surface);
