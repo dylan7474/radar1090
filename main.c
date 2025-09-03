@@ -67,6 +67,7 @@ typedef struct {
     int x;
     int y;
     Uint32 spawnTime;
+    double bearing;
 } RadarBlip;
 
 // --- Control State ---
@@ -111,6 +112,7 @@ double calculateBearing(double lat1, double lon1, double lat2, double lon2);
 void drawText(SDL_Renderer* renderer, TTF_Font* font, const char* text, int x, int y, SDL_Color color, bool center);
 void drawDottedCircle(SDL_Renderer *renderer, int32_t centreX, int32_t centreY, int32_t radius);
 void SDL_RenderDrawCircle(SDL_Renderer * renderer, int32_t centreX, int32_t centreY, int32_t radius);
+void drawPlaneIcon(SDL_Renderer* renderer, int x, int y, double bearing);
 
 // --- Networking ---
 struct MemoryStruct { char *memory; size_t size; };
@@ -416,6 +418,7 @@ int main(int argc, char* argv[]) {
                         activeBlips[activeBlipsCount].x = RADAR_CENTER_X + screenRadius * sin(angleRad);
                         activeBlips[activeBlipsCount].y = RADAR_CENTER_Y - screenRadius * cos(angleRad);
                         activeBlips[activeBlipsCount].spawnTime = currentTime;
+                        activeBlips[activeBlipsCount].bearing = targetBearing;
                         activeBlipsCount++;
 
                         lastPingedAircraft = trackedAircraft[i];
@@ -490,12 +493,7 @@ int main(int argc, char* argv[]) {
 
         // Blips
         for (int i = 0; i < activeBlipsCount; i++) {
-            Uint32 age = currentTime - activeBlips[i].spawnTime;
-            float life_ratio = (float)age / BLIP_LIFESPAN_MS;
-            int size = 3 * (1.0f - life_ratio);
-            if (size < 1) size = 1;
-            SDL_Rect blipRect = { activeBlips[i].x - size, activeBlips[i].y - size, size*2, size*2 };
-            SDL_RenderFillRect(renderer, &blipRect);
+            drawPlaneIcon(renderer, activeBlips[i].x, activeBlips[i].y, activeBlips[i].bearing);
         }
 
         // Display Overlay
@@ -579,6 +577,47 @@ void drawText(SDL_Renderer* renderer, TTF_Font* font, const char* text, int x, i
     SDL_RenderCopy(renderer, texture, NULL, &destRect);
     SDL_FreeSurface(surface);
     SDL_DestroyTexture(texture);
+}
+
+void drawPlaneIcon(SDL_Renderer* renderer, int x, int y, double bearing) {
+    double angle = deg2rad(bearing);
+    double dx = sin(angle);
+    double dy = -cos(angle);
+    double px = -dy;
+    double py = dx;
+
+    const double bodyLen = 10.0;
+    const double wingSpan = 6.0;
+
+    SDL_Point nose = {
+        x + (int)(dx * bodyLen / 2.0),
+        y + (int)(dy * bodyLen / 2.0)
+    };
+    SDL_Point tail = {
+        x - (int)(dx * bodyLen / 2.0),
+        y - (int)(dy * bodyLen / 2.0)
+    };
+    SDL_RenderDrawLine(renderer, tail.x, tail.y, nose.x, nose.y);
+
+    SDL_Point wingLeft = {
+        x + (int)(px * wingSpan / 2.0),
+        y + (int)(py * wingSpan / 2.0)
+    };
+    SDL_Point wingRight = {
+        x - (int)(px * wingSpan / 2.0),
+        y - (int)(py * wingSpan / 2.0)
+    };
+    SDL_RenderDrawLine(renderer, wingLeft.x, wingLeft.y, wingRight.x, wingRight.y);
+
+    SDL_Point tailLeft = {
+        tail.x + (int)(px * wingSpan / 4.0),
+        tail.y + (int)(py * wingSpan / 4.0)
+    };
+    SDL_Point tailRight = {
+        tail.x - (int)(px * wingSpan / 4.0),
+        tail.y - (int)(py * wingSpan / 4.0)
+    };
+    SDL_RenderDrawLine(renderer, tailLeft.x, tailLeft.y, tailRight.x, tailRight.y);
 }
 
 double deg2rad(double deg) { return deg * M_PI / 180.0; }
