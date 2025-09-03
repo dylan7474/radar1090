@@ -57,8 +57,12 @@
 // --- Data Structs ---
 typedef struct {
     char flight[10];
+    char hex[10];
     double distanceKm;
-    double bearing;
+    double bearing; // bearing from receiver to aircraft
+    double heading; // direction of travel
+    double lat;
+    double lon;
     int altitude;
     float groundSpeed;
     bool isValid;
@@ -68,7 +72,7 @@ typedef struct {
     int x;
     int y;
     Uint32 spawnTime;
-    double bearing;
+    double bearing; // visual orientation
 } RadarBlip;
 
 // --- Control State ---
@@ -115,7 +119,7 @@ double calculateBearing(double lat1, double lon1, double lat2, double lon2);
 void drawText(SDL_Renderer* renderer, TTF_Font* font, const char* text, int x, int y, SDL_Color color, bool center);
 void drawDottedCircle(SDL_Renderer *renderer, int32_t centreX, int32_t centreY, int32_t radius);
 void SDL_RenderDrawCircle(SDL_Renderer * renderer, int32_t centreX, int32_t centreY, int32_t radius);
-void drawPlaneIcon(SDL_Renderer* renderer, int x, int y, double bearing, Uint8 alpha);
+void drawPlaneIcon(SDL_Renderer* renderer, int x, int y, double angle, Uint8 alpha);
 
 // --- Networking ---
 struct MemoryStruct { char *memory; size_t size; };
@@ -195,39 +199,63 @@ void* fetchDataTask(void *arg) {
                 json_t *aircraft_array = json_object_get(root, "aircraft");
                 if (json_is_array(aircraft_array)) {
                     size_t count = json_array_size(aircraft_array);
+
+                    pthread_mutex_lock(&dataMutex);
+                    Aircraft* previous = trackedAircraft;
+                    int previousCount = trackedAircraftCount;
+                    pthread_mutex_unlock(&dataMutex);
+
                     Aircraft* planesInRange = malloc(sizeof(Aircraft) * (count > 0 ? count : 1));
                     if (planesInRange) {
                         int planesInRangeCount = 0;
 
                         for (size_t i = 0; i < count; i++) {
-                        json_t *plane = json_array_get(aircraft_array, i);
-                        json_t *lat_json = json_object_get(plane, "lat");
-                        json_t *lon_json = json_object_get(plane, "lon");
+                            json_t *plane = json_array_get(aircraft_array, i);
+                            json_t *lat_json = json_object_get(plane, "lat");
+                            json_t *lon_json = json_object_get(plane, "lon");
 
-                        if (json_is_real(lat_json) && json_is_real(lon_json)) {
-                            double dist = haversine(receiverLat, receiverLon, json_real_value(lat_json), json_real_value(lon_json));
-                            if (dist < radarRangeKm) {
-                                Aircraft ac = {.isValid = true};
-                                const char* flightStr = json_string_value(json_object_get(plane, "flight"));
-                                if(flightStr) { strncpy(ac.flight, flightStr, sizeof(ac.flight) - 1); ac.flight[sizeof(ac.flight) - 1] = '\0'; } else { ac.flight[0] = '\0'; }
+                            if (json_is_real(lat_json) && json_is_real(lon_json)) {
+                                double lat = json_real_value(lat_json);
+                                double lon = json_real_value(lon_json);
+                                double dist = haversine(receiverLat, receiverLon, lat, lon);
+                                if (dist < radarRangeKm) {
+                                    Aircraft ac = {.isValid = true};
+                                    const char* flightStr = json_string_value(json_object_get(plane, "flight"));
+                                    if(flightStr) { strncpy(ac.flight, flightStr, sizeof(ac.flight) - 1); ac.flight[sizeof(ac.flight) - 1] = '\0'; } else { ac.flight[0] = '\0'; }
 
-                                ac.distanceKm = dist;
-                                ac.bearing = calculateBearing(receiverLat, receiverLon, json_real_value(lat_json), json_real_value(lon_json));
+                                    const char* hexStr = json_string_value(json_object_get(plane, "hex"));
+                                    if(hexStr) { strncpy(ac.hex, hexStr, sizeof(ac.hex) - 1); ac.hex[sizeof(ac.hex) - 1] = '\0'; } else { ac.hex[0] = '\0'; }
 
-                                json_t *alt_json = json_object_get(plane, "alt_baro");
-                                if (json_is_integer(alt_json)) ac.altitude = json_integer_value(alt_json); else ac.altitude = -1;
+                                    ac.lat = lat;
+                                    ac.lon = lon;
+                                    ac.distanceKm = dist;
+                                    ac.bearing = calculateBearing(receiverLat, receiverLon, lat, lon);
+                                    ac.heading = ac.bearing;
 
-                                json_t *gs_json = json_object_get(plane, "gs");
-                                if(json_is_real(gs_json)) ac.groundSpeed = json_real_value(gs_json); else ac.groundSpeed = -1.0f;
+                                    if (previous) {
+                                        for (int p = 0; p < previousCount; p++) {
+                                            if (strcmp(previous[p].hex, ac.hex) == 0) {
+                                                ac.heading = calculateBearing(previous[p].lat, previous[p].lon, lat, lon);
+                                                break;
+                                            }
+                                        }
+                                    }
 
-                                planesInRange[planesInRangeCount++] = ac;
+                                    json_t *alt_json = json_object_get(plane, "alt_baro");
+                                    if (json_is_integer(alt_json)) ac.altitude = json_integer_value(alt_json); else ac.altitude = -1;
+
+                                    json_t *gs_json = json_object_get(plane, "gs");
+                                    if(json_is_real(gs_json)) ac.groundSpeed = json_real_value(gs_json); else ac.groundSpeed = -1.0f;
+
+                                    planesInRange[planesInRangeCount++] = ac;
+                                }
                             }
                         }
-                    }
-                    pthread_mutex_lock(&dataMutex);
-                    free(trackedAircraft);
-                    trackedAircraft = planesInRange;
-                    trackedAircraftCount = planesInRangeCount;
+
+                        pthread_mutex_lock(&dataMutex);
+                        free(previous);
+                        trackedAircraft = planesInRange;
+                        trackedAircraftCount = planesInRangeCount;
                     // New data arrived, so we need a new paint buffer
                         free(paintedThisTurn);
                         paintedThisTurn = calloc(trackedAircraftCount > 0 ? trackedAircraftCount : 1, sizeof(bool));
@@ -463,7 +491,7 @@ int main(int argc, char* argv[]) {
                         activeBlips[activeBlipsCount].x = RADAR_CENTER_X + screenRadius * sin(angleRad);
                         activeBlips[activeBlipsCount].y = RADAR_CENTER_Y - screenRadius * cos(angleRad);
                         activeBlips[activeBlipsCount].spawnTime = currentTime;
-                        activeBlips[activeBlipsCount].bearing = targetBearing;
+                        activeBlips[activeBlipsCount].bearing = trackedAircraft[i].heading;
                         activeBlipsCount++;
 
                         lastPingedAircraft = trackedAircraft[i];
@@ -634,7 +662,7 @@ void drawText(SDL_Renderer* renderer, TTF_Font* font, const char* text, int x, i
     SDL_DestroyTexture(texture);
 }
 
-void drawPlaneIcon(SDL_Renderer* renderer, int x, int y, double bearing, Uint8 alpha) {
+void drawPlaneIcon(SDL_Renderer* renderer, int x, int y, double angle, Uint8 alpha) {
     static SDL_Texture* planeTexture = NULL;
     static int planeWidth = 0;
     static int planeHeight = 0;
@@ -665,7 +693,7 @@ void drawPlaneIcon(SDL_Renderer* renderer, int x, int y, double bearing, Uint8 a
         planeHeight
     };
 
-    SDL_RenderCopyEx(renderer, planeTexture, NULL, &dst, bearing, NULL, SDL_FLIP_NONE);
+    SDL_RenderCopyEx(renderer, planeTexture, NULL, &dst, angle, NULL, SDL_FLIP_NONE);
 }
 
 double deg2rad(double deg) { return deg * M_PI / 180.0; }
