@@ -519,10 +519,10 @@ int main(int argc, char* argv[]) {
             double diff = fabs(headingToBase - trackedAircraft[i].heading);
             diff = fmod(diff + 360.0, 360.0);
             if (diff > 180.0) diff = 360.0 - diff;
-            if (diff < 90.0) {
+            double distanceAlong = trackedAircraft[i].distanceKm * cos(deg2rad(diff));
+            if (distanceAlong > 0) {
                 double minDist = trackedAircraft[i].distanceKm * sin(deg2rad(diff));
-                if (trackedAircraft[i].distanceKm > inboundAlertDistanceKm &&
-                    minDist <= inboundAlertDistanceKm) {
+                if (minDist <= inboundAlertDistanceKm) {
                     trackedAircraft[i].inbound = true;
                     const char* name = strlen(trackedAircraft[i].flight) > 0 ?
                                       trackedAircraft[i].flight : trackedAircraft[i].hex;
@@ -574,7 +574,7 @@ int main(int argc, char* argv[]) {
                             if (diff > 180.0) diff = 360.0 - diff;
                             double distanceAlong = trackedAircraft[i].distanceKm * cos(deg2rad(diff));
                             double speedKmh = trackedAircraft[i].groundSpeed * 1.852;
-                            if (speedKmh > 0) {
+                            if (distanceAlong > 0 && speedKmh > 0) {
                                 activeBlips[activeBlipsCount].minutesToBase = (int)round((distanceAlong / speedKmh) * 60.0);
                             }
                         }
