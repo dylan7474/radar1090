@@ -82,6 +82,7 @@ typedef struct {
     Uint32 spawnTime;
     double bearing; // visual orientation
     bool inbound;
+    int minutesToBase; // minutes until closest approach, -1 if unknown
 } RadarBlip;
 
 // --- Control State ---
@@ -565,6 +566,18 @@ int main(int argc, char* argv[]) {
                         activeBlips[activeBlipsCount].spawnTime = currentTime;
                         activeBlips[activeBlipsCount].bearing = trackedAircraft[i].heading;
                         activeBlips[activeBlipsCount].inbound = trackedAircraft[i].inbound;
+                        activeBlips[activeBlipsCount].minutesToBase = -1;
+                        if (trackedAircraft[i].inbound && trackedAircraft[i].groundSpeed > 0) {
+                            double headingToBase = fmod(trackedAircraft[i].bearing + 180.0, 360.0);
+                            double diff = fabs(headingToBase - trackedAircraft[i].heading);
+                            diff = fmod(diff + 360.0, 360.0);
+                            if (diff > 180.0) diff = 360.0 - diff;
+                            double distanceAlong = trackedAircraft[i].distanceKm * cos(deg2rad(diff));
+                            double speedKmh = trackedAircraft[i].groundSpeed * 1.852;
+                            if (speedKmh > 0) {
+                                activeBlips[activeBlipsCount].minutesToBase = (int)round((distanceAlong / speedKmh) * 60.0);
+                            }
+                        }
                         activeBlipsCount++;
 
                         lastPingedAircraft = trackedAircraft[i];
@@ -665,6 +678,14 @@ int main(int argc, char* argv[]) {
                           activeBlips[i].y,
                           activeBlips[i].bearing,
                           (Uint8)(alpha * 255));
+            if (activeBlips[i].inbound && activeBlips[i].minutesToBase >= 0) {
+                char tbuf[12];
+                snprintf(tbuf, sizeof(tbuf), "%d", activeBlips[i].minutesToBase);
+                drawText(renderer, small_font, tbuf,
+                         activeBlips[i].x + 10,
+                         activeBlips[i].y - 10,
+                         accent, false);
+            }
         }
         SDL_SetRenderDrawColor(renderer, accent.r, accent.g, accent.b, accent.a);
 
