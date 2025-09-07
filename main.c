@@ -106,6 +106,7 @@ float rangeSteps[] = {5, 10, 25, 50, 100, 150, 200, 300};
 const int rangeStepsCount = sizeof(rangeSteps) / sizeof(rangeSteps[0]);
 int rangeStepIndex = 3;
 float radarRangeKm;
+float inboundAlertDistanceKm = INBOUND_ALERT_DISTANCE_KM;
 float sweepSpeedSteps[] = {90.0, 180.0, 270.0, 360.0};
 const int speedStepsCount = sizeof(sweepSpeedSteps) / sizeof(sweepSpeedSteps[0]);
 int sweepSpeedIndex = 1;
@@ -477,6 +478,18 @@ int main(int argc, char* argv[]) {
                         if (paintedThisTurn) memset(paintedThisTurn, 0, trackedAircraftCount * sizeof(bool));
                         displayTimeout = currentTime + DISPLAY_TIMEOUT_MS;
                         break;
+                    case SDLK_LEFT:
+                        if (inboundAlertDistanceKm > 1.0f) inboundAlertDistanceKm -= 1.0f;
+                        snprintf(displayMessage, sizeof(displayMessage), "Alert: %.0f km", inboundAlertDistanceKm);
+                        displayAlert = false;
+                        displayTimeout = currentTime + DISPLAY_TIMEOUT_MS;
+                        break;
+                    case SDLK_RIGHT:
+                        inboundAlertDistanceKm += 1.0f;
+                        snprintf(displayMessage, sizeof(displayMessage), "Alert: %.0f km", inboundAlertDistanceKm);
+                        displayAlert = false;
+                        displayTimeout = currentTime + DISPLAY_TIMEOUT_MS;
+                        break;
                 }
             }
         }
@@ -507,8 +520,8 @@ int main(int argc, char* argv[]) {
             if (diff > 180.0) diff = 360.0 - diff;
             if (diff < 90.0) {
                 double minDist = trackedAircraft[i].distanceKm * sin(deg2rad(diff));
-                if (trackedAircraft[i].distanceKm > INBOUND_ALERT_DISTANCE_KM &&
-                    minDist <= INBOUND_ALERT_DISTANCE_KM) {
+                if (trackedAircraft[i].distanceKm > inboundAlertDistanceKm &&
+                    minDist <= inboundAlertDistanceKm) {
                     trackedAircraft[i].inbound = true;
                     const char* name = strlen(trackedAircraft[i].flight) > 0 ?
                                       trackedAircraft[i].flight : trackedAircraft[i].hex;
@@ -608,8 +621,10 @@ int main(int argc, char* argv[]) {
              drawText(renderer, font, "Scanning...", 20, text_y, textColor, false); text_y += 35;
         }
         
-        text_y = SCREEN_HEIGHT - 120;
+        text_y = SCREEN_HEIGHT - 155;
         snprintf(buffer, sizeof(buffer), "Range: %.0f km", radarRangeKm);
+        drawText(renderer, font, buffer, 20, text_y, accent, false); text_y += 35;
+        snprintf(buffer, sizeof(buffer), "Alert: %.0f km", inboundAlertDistanceKm);
         drawText(renderer, font, buffer, 20, text_y, accent, false); text_y += 35;
         snprintf(buffer, sizeof(buffer), "Tracked: %d", trackedAircraftCount);
         drawText(renderer, font, buffer, 20, text_y, accent, false); text_y += 35;
