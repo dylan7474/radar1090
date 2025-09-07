@@ -567,6 +567,11 @@ int main(int argc, char* argv[]) {
         SDL_Color accent = COLOR_RADAR;
         SDL_Color alert = COLOR_ALERT;
 
+        if (displayAlert && currentTime < displayTimeout) {
+            drawText(renderer, font, displayMessage, 20, text_y, alert, false);
+            text_y += 35;
+        }
+
         if (lastPingedAircraft.isValid) {
             snprintf(buffer, sizeof(buffer), "Flt: %s", strlen(lastPingedAircraft.flight) > 0 ? lastPingedAircraft.flight : "------");
             drawText(renderer, font, buffer, 20, text_y, textColor, false); text_y += 35;
@@ -623,15 +628,14 @@ int main(int argc, char* argv[]) {
         SDL_SetRenderDrawColor(renderer, accent.r, accent.g, accent.b, accent.a);
 
         // Display Overlay
-        if (currentTime < displayTimeout) {
+        if (currentTime < displayTimeout && !displayAlert) {
             SDL_Rect bg = {SCREEN_WIDTH/2 - 175, SCREEN_HEIGHT/2 - 40, 350, 80};
             SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
             SDL_SetRenderDrawColor(renderer, COLOR_OVERLAY_BG.r, COLOR_OVERLAY_BG.g, COLOR_OVERLAY_BG.b, COLOR_OVERLAY_BG.a);
             SDL_RenderFillRect(renderer, &bg);
             SDL_SetRenderDrawColor(renderer, accent.r, accent.g, accent.b, accent.a);
             SDL_RenderDrawRect(renderer, &bg);
-            SDL_Color overlayColor = displayAlert ? alert : textColor;
-            drawText(renderer, font, displayMessage, SCREEN_WIDTH/2, bg.y + 25, overlayColor, true);
+            drawText(renderer, font, displayMessage, SCREEN_WIDTH/2, bg.y + 25, textColor, true);
         }
 
         SDL_RenderPresent(renderer);
