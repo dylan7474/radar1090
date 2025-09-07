@@ -528,7 +528,7 @@ int main(int argc, char* argv[]) {
             if (diff > 180.0) diff = 360.0 - diff;
             if (diff < 90.0) {
                 double minDist = trackedAircraft[i].distanceKm * sin(deg2rad(diff));
-                if (minDist <= 5.0) {
+                if (minDist <= INBOUND_ALERT_DISTANCE_KM) {
                     inboundFound = true;
                     snprintf(displayMessage, sizeof(displayMessage), "Inbound alert: %s",
                              strlen(trackedAircraft[i].flight) > 0 ? trackedAircraft[i].flight : trackedAircraft[i].hex);
