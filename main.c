@@ -82,6 +82,7 @@ typedef struct {
     Uint32 spawnTime;
     double bearing; // visual orientation
     bool inbound;
+    int minutesToBase; // minutes until closest approach, -1 if unknown
 } RadarBlip;
 
 // --- Control State ---
@@ -518,10 +519,10 @@ int main(int argc, char* argv[]) {
             double diff = fabs(headingToBase - trackedAircraft[i].heading);
             diff = fmod(diff + 360.0, 360.0);
             if (diff > 180.0) diff = 360.0 - diff;
-            if (diff < 90.0) {
+            double distanceAlong = trackedAircraft[i].distanceKm * cos(deg2rad(diff));
+            if (distanceAlong > 0) {
                 double minDist = trackedAircraft[i].distanceKm * sin(deg2rad(diff));
-                if (trackedAircraft[i].distanceKm > inboundAlertDistanceKm &&
-                    minDist <= inboundAlertDistanceKm) {
+                if (minDist <= inboundAlertDistanceKm) {
                     trackedAircraft[i].inbound = true;
                     const char* name = strlen(trackedAircraft[i].flight) > 0 ?
                                       trackedAircraft[i].flight : trackedAircraft[i].hex;
@@ -565,6 +566,18 @@ int main(int argc, char* argv[]) {
                         activeBlips[activeBlipsCount].spawnTime = currentTime;
                         activeBlips[activeBlipsCount].bearing = trackedAircraft[i].heading;
                         activeBlips[activeBlipsCount].inbound = trackedAircraft[i].inbound;
+                        activeBlips[activeBlipsCount].minutesToBase = -1;
+                        if (trackedAircraft[i].inbound && trackedAircraft[i].groundSpeed > 0) {
+                            double headingToBase = fmod(trackedAircraft[i].bearing + 180.0, 360.0);
+                            double diff = fabs(headingToBase - trackedAircraft[i].heading);
+                            diff = fmod(diff + 360.0, 360.0);
+                            if (diff > 180.0) diff = 360.0 - diff;
+                            double distanceAlong = trackedAircraft[i].distanceKm * cos(deg2rad(diff));
+                            double speedKmh = trackedAircraft[i].groundSpeed * 1.852;
+                            if (distanceAlong > 0 && speedKmh > 0) {
+                                activeBlips[activeBlipsCount].minutesToBase = (int)round((distanceAlong / speedKmh) * 60.0);
+                            }
+                        }
                         activeBlipsCount++;
 
                         lastPingedAircraft = trackedAircraft[i];
@@ -660,11 +673,22 @@ int main(int argc, char* argv[]) {
                 float flash = ((currentTime / 250) % 2) ? 1.0f : 0.2f;
                 alpha *= flash;
             }
+            Uint8 alphaByte = (Uint8)(alpha * 255);
             drawPlaneIcon(renderer,
                           activeBlips[i].x,
                           activeBlips[i].y,
                           activeBlips[i].bearing,
-                          (Uint8)(alpha * 255));
+                          alphaByte);
+            if (activeBlips[i].inbound && activeBlips[i].minutesToBase >= 0) {
+                char tbuf[12];
+                snprintf(tbuf, sizeof(tbuf), "%d", activeBlips[i].minutesToBase);
+                SDL_Color minuteColor = accent;
+                minuteColor.a = alphaByte;
+                drawText(renderer, small_font, tbuf,
+                         activeBlips[i].x + 10,
+                         activeBlips[i].y - 10,
+                         minuteColor, false);
+            }
         }
         SDL_SetRenderDrawColor(renderer, accent.r, accent.g, accent.b, accent.a);
 
@@ -740,6 +764,9 @@ void drawText(SDL_Renderer* renderer, TTF_Font* font, const char* text, int x, i
     if (!surface) return;
     SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, surface);
     if (!texture) { SDL_FreeSurface(surface); return; }
+
+    SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+    SDL_SetTextureAlphaMod(texture, color.a);
     
     SDL_Rect destRect = {x, y, surface->w, surface->h};
     if (center) {
