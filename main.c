@@ -673,18 +673,21 @@ int main(int argc, char* argv[]) {
                 float flash = ((currentTime / 250) % 2) ? 1.0f : 0.2f;
                 alpha *= flash;
             }
+            Uint8 alphaByte = (Uint8)(alpha * 255);
             drawPlaneIcon(renderer,
                           activeBlips[i].x,
                           activeBlips[i].y,
                           activeBlips[i].bearing,
-                          (Uint8)(alpha * 255));
+                          alphaByte);
             if (activeBlips[i].inbound && activeBlips[i].minutesToBase >= 0) {
                 char tbuf[12];
                 snprintf(tbuf, sizeof(tbuf), "%d", activeBlips[i].minutesToBase);
+                SDL_Color minuteColor = accent;
+                minuteColor.a = alphaByte;
                 drawText(renderer, small_font, tbuf,
                          activeBlips[i].x + 10,
                          activeBlips[i].y - 10,
-                         accent, false);
+                         minuteColor, false);
             }
         }
         SDL_SetRenderDrawColor(renderer, accent.r, accent.g, accent.b, accent.a);
@@ -761,6 +764,9 @@ void drawText(SDL_Renderer* renderer, TTF_Font* font, const char* text, int x, i
     if (!surface) return;
     SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, surface);
     if (!texture) { SDL_FreeSurface(surface); return; }
+
+    SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+    SDL_SetTextureAlphaMod(texture, color.a);
     
     SDL_Rect destRect = {x, y, surface->w, surface->h};
     if (center) {
