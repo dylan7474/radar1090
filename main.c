@@ -72,6 +72,7 @@ typedef struct {
     double lon;
     int altitude;
     float groundSpeed;
+    bool inbound;
     bool isValid;
 } Aircraft;
 
@@ -80,6 +81,7 @@ typedef struct {
     int y;
     Uint32 spawnTime;
     double bearing; // visual orientation
+    bool inbound;
 } RadarBlip;
 
 // --- Control State ---
@@ -89,7 +91,7 @@ ControlMode currentMode = VOLUME;
 // --- Global State Variables ---
 bool app_is_running = true;
 bool dataConnectionOk = false;
-Aircraft lastPingedAircraft = { .isValid = false };
+Aircraft lastPingedAircraft = { .isValid = false, .inbound = false };
 Aircraft* trackedAircraft = NULL;
 int trackedAircraftCount = 0;
 RadarBlip* activeBlips = NULL;
@@ -227,7 +229,7 @@ void* fetchDataTask(void *arg) {
                                 double lon = json_real_value(lon_json);
                                 double dist = haversine(receiverLat, receiverLon, lat, lon);
                                 if (dist < radarRangeKm) {
-                                    Aircraft ac = {.isValid = true};
+                                    Aircraft ac = {.isValid = true, .inbound = false};
                                     const char* flightStr = json_string_value(json_object_get(plane, "flight"));
                                     if(flightStr) { strncpy(ac.flight, flightStr, sizeof(ac.flight) - 1); ac.flight[sizeof(ac.flight) - 1] = '\0'; } else { ac.flight[0] = '\0'; }
 
@@ -494,6 +496,43 @@ int main(int argc, char* argv[]) {
              memset(paintedThisTurn, 0, trackedAircraftCount * sizeof(bool));
         }
 
+        // Detect inbound aircraft and build alert message
+        int inboundCount = 0;
+        char inboundMessage[100] = "";
+        for (int i = 0; i < trackedAircraftCount; i++) {
+            trackedAircraft[i].inbound = false;
+            double headingToBase = fmod(trackedAircraft[i].bearing + 180.0, 360.0);
+            double diff = fabs(headingToBase - trackedAircraft[i].heading);
+            diff = fmod(diff + 360.0, 360.0);
+            if (diff > 180.0) diff = 360.0 - diff;
+            if (diff < 90.0) {
+                double minDist = trackedAircraft[i].distanceKm * sin(deg2rad(diff));
+                if (minDist <= INBOUND_ALERT_DISTANCE_KM) {
+                    trackedAircraft[i].inbound = true;
+                    const char* name = strlen(trackedAircraft[i].flight) > 0 ?
+                                      trackedAircraft[i].flight : trackedAircraft[i].hex;
+                    if (inboundCount == 0) {
+                        snprintf(inboundMessage, sizeof(inboundMessage),
+                                 "Inbound alert: %s", name);
+                    } else {
+                        size_t len = strlen(inboundMessage);
+                        snprintf(inboundMessage + len, sizeof(inboundMessage) - len,
+                                 ", %s", name);
+                    }
+                    inboundCount++;
+                }
+            }
+        }
+        if (inboundCount > 0) {
+            strncpy(displayMessage, inboundMessage, sizeof(displayMessage));
+            displayMessage[sizeof(displayMessage) - 1] = '\0';
+            displayAlert = true;
+            displayTimeout = currentTime + DISPLAY_TIMEOUT_MS;
+        } else {
+            displayAlert = false;
+        }
+
+        // Add radar blips for newly pinged aircraft
         for (int i = 0; i < trackedAircraftCount; i++) {
             if(paintedThisTurn && !paintedThisTurn[i]) {
                 double targetBearing = trackedAircraft[i].bearing;
@@ -503,7 +542,7 @@ int main(int argc, char* argv[]) {
                 if(bearingCrossed) {
                     double angleRad = deg2rad(targetBearing);
                     float screenRadius = (trackedAircraft[i].distanceKm / radarRangeKm) * RADAR_RADIUS;
-                    
+
                     RadarBlip* newBlips = realloc(activeBlips, (activeBlipsCount + 1) * sizeof(RadarBlip));
                     if (newBlips) {
                         activeBlips = newBlips;
@@ -511,6 +550,7 @@ int main(int argc, char* argv[]) {
                         activeBlips[activeBlipsCount].y = RADAR_CENTER_Y - screenRadius * cos(angleRad);
                         activeBlips[activeBlipsCount].spawnTime = currentTime;
                         activeBlips[activeBlipsCount].bearing = trackedAircraft[i].heading;
+                        activeBlips[activeBlipsCount].inbound = trackedAircraft[i].inbound;
                         activeBlipsCount++;
 
                         lastPingedAircraft = trackedAircraft[i];
@@ -519,26 +559,6 @@ int main(int argc, char* argv[]) {
                     }
                 }
             }
-        }
-        bool inboundFound = false;
-        for (int i = 0; i < trackedAircraftCount && !inboundFound; i++) {
-            double headingToBase = fmod(trackedAircraft[i].bearing + 180.0, 360.0);
-            double diff = fabs(headingToBase - trackedAircraft[i].heading);
-            diff = fmod(diff + 360.0, 360.0);
-            if (diff > 180.0) diff = 360.0 - diff;
-            if (diff < 90.0) {
-                double minDist = trackedAircraft[i].distanceKm * sin(deg2rad(diff));
-                if (minDist <= INBOUND_ALERT_DISTANCE_KM) {
-                    inboundFound = true;
-                    snprintf(displayMessage, sizeof(displayMessage), "Inbound alert: %s",
-                             strlen(trackedAircraft[i].flight) > 0 ? trackedAircraft[i].flight : trackedAircraft[i].hex);
-                    displayAlert = true;
-                    displayTimeout = currentTime + DISPLAY_TIMEOUT_MS;
-                }
-            }
-        }
-        if (!inboundFound) {
-            displayAlert = false;
         }
         pthread_mutex_unlock(&dataMutex);
 
@@ -619,11 +639,16 @@ int main(int argc, char* argv[]) {
             float age = currentTime - activeBlips[i].spawnTime;
             float fade = 1.0f - (age / rotationPeriodMs);
             if (fade < 0.0f) fade = 0.0f;
+            float alpha = fade;
+            if (activeBlips[i].inbound) {
+                float flash = ((currentTime / 250) % 2) ? 1.0f : 0.2f;
+                alpha *= flash;
+            }
             drawPlaneIcon(renderer,
                           activeBlips[i].x,
                           activeBlips[i].y,
                           activeBlips[i].bearing,
-                          (Uint8)(fade * 255));
+                          (Uint8)(alpha * 255));
         }
         SDL_SetRenderDrawColor(renderer, accent.r, accent.g, accent.b, accent.a);
 
