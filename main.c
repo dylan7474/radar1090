@@ -110,6 +110,7 @@ int sweepSpeedIndex = 1;
 float sweepSpeed;
 Uint32 displayTimeout = 0;
 char displayMessage[100];
+bool displayAlert = false;
 
 // --- Animation & Audio State ---
 float sweepAngle = 0.0;
@@ -420,6 +421,7 @@ int main(int argc, char* argv[]) {
                     case SDLK_m: 
                         currentMode = (currentMode == VOLUME) ? SPEED : VOLUME;
                         snprintf(displayMessage, sizeof(displayMessage), "Mode: %s", currentMode == VOLUME ? "Volume" : "Sweep Speed");
+                        displayAlert = false;
                         displayTimeout = currentTime + DISPLAY_TIMEOUT_MS;
                         break;
                     case SDLK_EQUALS:
@@ -427,10 +429,12 @@ int main(int argc, char* argv[]) {
                         if (currentMode == VOLUME) {
                             if (beepVolume < 20) beepVolume++;
                             snprintf(displayMessage, sizeof(displayMessage), "Volume: %d", beepVolume);
+                            displayAlert = false;
                         } else {
                             if (sweepSpeedIndex < speedStepsCount - 1) sweepSpeedIndex++;
                             sweepSpeed = sweepSpeedSteps[sweepSpeedIndex];
                             snprintf(displayMessage, sizeof(displayMessage), "Speed: %.0f d/s", sweepSpeed);
+                            displayAlert = false;
                         }
                         displayTimeout = currentTime + DISPLAY_TIMEOUT_MS;
                         break;
@@ -438,10 +442,12 @@ int main(int argc, char* argv[]) {
                         if (currentMode == VOLUME) {
                             if (beepVolume > 0) beepVolume--;
                             snprintf(displayMessage, sizeof(displayMessage), "Volume: %d", beepVolume);
+                            displayAlert = false;
                         } else {
                             if (sweepSpeedIndex > 0) sweepSpeedIndex--;
                             sweepSpeed = sweepSpeedSteps[sweepSpeedIndex];
                             snprintf(displayMessage, sizeof(displayMessage), "Speed: %.0f d/s", sweepSpeed);
+                            displayAlert = false;
                         }
                         displayTimeout = currentTime + DISPLAY_TIMEOUT_MS;
                         break;
@@ -449,6 +455,7 @@ int main(int argc, char* argv[]) {
                         if(rangeStepIndex < rangeStepsCount - 1) rangeStepIndex++;
                         radarRangeKm = rangeSteps[rangeStepIndex];
                         snprintf(displayMessage, sizeof(displayMessage), "Range: %.0f km", radarRangeKm);
+                        displayAlert = false;
                         free(activeBlips);
                         activeBlips = NULL;
                         activeBlipsCount = 0;
@@ -460,6 +467,7 @@ int main(int argc, char* argv[]) {
                         if(rangeStepIndex > 0) rangeStepIndex--;
                         radarRangeKm = rangeSteps[rangeStepIndex];
                         snprintf(displayMessage, sizeof(displayMessage), "Range: %.0f km", radarRangeKm);
+                        displayAlert = false;
                         free(activeBlips);
                         activeBlips = NULL;
                         activeBlipsCount = 0;
@@ -511,6 +519,26 @@ int main(int argc, char* argv[]) {
                     }
                 }
             }
+        }
+        bool inboundFound = false;
+        for (int i = 0; i < trackedAircraftCount && !inboundFound; i++) {
+            double headingToBase = fmod(trackedAircraft[i].bearing + 180.0, 360.0);
+            double diff = fabs(headingToBase - trackedAircraft[i].heading);
+            diff = fmod(diff + 360.0, 360.0);
+            if (diff > 180.0) diff = 360.0 - diff;
+            if (diff < 90.0) {
+                double minDist = trackedAircraft[i].distanceKm * sin(deg2rad(diff));
+                if (minDist <= 5.0) {
+                    inboundFound = true;
+                    snprintf(displayMessage, sizeof(displayMessage), "Inbound alert: %s",
+                             strlen(trackedAircraft[i].flight) > 0 ? trackedAircraft[i].flight : trackedAircraft[i].hex);
+                    displayAlert = true;
+                    displayTimeout = currentTime + DISPLAY_TIMEOUT_MS;
+                }
+            }
+        }
+        if (!inboundFound) {
+            displayAlert = false;
         }
         pthread_mutex_unlock(&dataMutex);
 
@@ -602,7 +630,8 @@ int main(int argc, char* argv[]) {
             SDL_RenderFillRect(renderer, &bg);
             SDL_SetRenderDrawColor(renderer, accent.r, accent.g, accent.b, accent.a);
             SDL_RenderDrawRect(renderer, &bg);
-            drawText(renderer, font, displayMessage, SCREEN_WIDTH/2, bg.y + 25, textColor, true);
+            SDL_Color overlayColor = displayAlert ? alert : textColor;
+            drawText(renderer, font, displayMessage, SCREEN_WIDTH/2, bg.y + 25, overlayColor, true);
         }
 
         SDL_RenderPresent(renderer);
