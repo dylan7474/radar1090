@@ -5,6 +5,21 @@ Simple radar display application built with SDL2.
 The interface now features a modern dark theme, refined radar grid and
 DejaVu Sans fonts for a more professional look.
 
+## Prebuilt binary
+
+A prebuilt x86-64 binary for Arch-based distributions is attached to the
+[latest release](https://github.com/dylan7474/radar1090/releases/latest)
+as `radar_display-x86_64-arch`. It is dynamically linked, so install the
+runtime libraries first:
+
+```
+sudo pacman -S --needed sdl2-compat sdl2_ttf sdl2_mixer sdl2_image curl jansson
+chmod +x radar_display-x86_64-arch
+./radar_display-x86_64-arch
+```
+
+On other distributions, build from source (see below).
+
 ## Controls
 
 - `q` quit
